@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package gfs;
+
+option java_multiple_files = true;
+option java_package = "io.gfs.proto";
+option java_outer_classname = "GfsProto";
+
+// ---------------------------------------------------------------- shared types
+
+message ServerAddress {
+  string server_id = 1;
+  string host = 2;
+  int32 port = 3;
+}
+
+message ChunkInfo {
+  string chunk_handle = 1;
+  int64 size_bytes = 2;
+}
+
+// ------------------------------------------------------- master control plane
+
+service MasterService {
+  // Chunkserver -> master. Liveness + chunk report + implicit lease renewal.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Client -> master. Who is the primary right now?
+  rpc GetPrimary(GetPrimaryRequest) returns (GetPrimaryResponse);
+
+  // Chunkserver -> master, on EVERY write. "Am I still the primary, and who
+  // are the live secondaries?" This is the live lease check.
+  rpc CheckPrimary(CheckPrimaryRequest) returns (CheckPrimaryResponse);
+
+  // Client -> master. Which live servers hold this chunk?
+  rpc LocateChunk(LocateChunkRequest) returns (LocateChunkResponse);
+
+  // Dashboard / CLI -> master. Full cluster snapshot.
+  rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
+}
+
+message HeartbeatRequest {
+  string server_id = 1;
+  repeated ChunkInfo chunks = 2;   // full chunk report; master learns locations from this
+}
+
+message HeartbeatResponse {
+  bool is_primary = 1;
+  int64 lease_id = 2;
+  int64 lease_expiry_ms = 3;       // master clock, epoch millis
+  string primary_id = 4;           // empty if none
+}
+
+message GetPrimaryRequest {}
+
+message GetPrimaryResponse {
+  bool has_primary = 1;
+  ServerAddress primary = 2;
+  int64 lease_id = 3;
+  int64 lease_expiry_ms = 4;
+}
+
+message CheckPrimaryRequest {
+  string server_id = 1;
+}
+
+message CheckPrimaryResponse {
+  bool is_primary = 1;
+  int64 lease_id = 2;
+  int64 lease_expiry_ms = 3;
+  repeated ServerAddress secondaries = 4;  // alive servers other than the caller
+}
+
+message LocateChunkRequest {
+  string chunk_handle = 1;
+}
+
+message LocateChunkResponse {
+  repeated ServerAddress servers = 1;      // alive servers holding the chunk
+}
+
+message GetClusterStatusRequest {}
+
+message ServerStatus {
+  string server_id = 1;
+  string host = 2;
+  int32 port = 3;
+  bool alive = 4;
+  bool is_primary = 5;
+  int64 last_heartbeat_ms = 6;             // master clock; 0 = never seen
+  repeated ChunkInfo chunks = 7;           // last reported
+}
+
+message ChunkLocation {
+  string chunk_handle = 1;
+  repeated string server_ids = 2;          // ALIVE servers only
+}
+
+message GetClusterStatusResponse {
+  string primary_id = 1;                   // empty if none
+  int64 lease_id = 2;
+  int64 lease_expiry_ms = 3;
+  repeated ServerStatus servers = 4;
+  repeated ChunkLocation chunk_locations = 5;
+  int64 server_time_ms = 6;
+}
+
+// ------------------------------------------------------- chunkserver data plane
+
+service ChunkService {
+  // Client -> primary only. Enforced via live master check + fencing.
+  rpc WriteChunk(WriteChunkRequest) returns (WriteChunkResponse);
+
+  // Primary -> secondary. Carries the lease id as a fencing token.
+  rpc ReplicateChunk(ReplicateChunkRequest) returns (ReplicateChunkResponse);
+
+  // Client -> any replica.
+  rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
+}
+
+message WriteChunkRequest {
+  string chunk_handle = 1;
+  int64 offset = 2;
+  bytes data = 3;
+}
+
+message WriteChunkResponse {
+  int64 lease_id = 1;
+  int32 replicas_acked = 2;                // including the primary
+  int64 new_chunk_size = 3;
+}
+
+message ReplicateChunkRequest {
+  string chunk_handle = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  int64 lease_id = 4;
+  string primary_id = 5;
+}
+
+message ReplicateChunkResponse {}
+
+message ReadChunkRequest {
+  string chunk_handle = 1;
+  int64 offset = 2;
+  int64 length = 3;                        // <= 0 means "to end of chunk"
+}
+
+message ReadChunkResponse {
+  bytes data = 1;
+  int64 chunk_size = 2;
+  string served_by = 3;
+}
