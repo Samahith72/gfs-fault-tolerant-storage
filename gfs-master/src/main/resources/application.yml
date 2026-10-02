@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: gfs-master
+  main:
+    banner-mode: off
+    web-application-type: none
+
+grpc:
+  server:
+    port: ${GFS_GRPC_PORT:9000}
+
+gfs:
+  master:
+    heartbeat-timeout-ms: 4000   # no heartbeat for this long => server considered DEAD
+    lease-duration-ms: 5000      # primary lease; renewed by each primary heartbeat
+    # Phase 1: static membership. Phase 3 replaces this with dynamic registration.
+    servers:
+      - id: cs1
+        host: ${GFS_CS1_HOST:localhost}
+        port: ${GFS_CS1_PORT:9101}
+      - id: cs2
+        host: ${GFS_CS2_HOST:localhost}
+        port: ${GFS_CS2_PORT:9102}
+      - id: cs3
+        host: ${GFS_CS3_HOST:localhost}
+        port: ${GFS_CS3_PORT:9103}
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{24} - %msg%n"

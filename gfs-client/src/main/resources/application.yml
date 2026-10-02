@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: gfs-client
+  main:
+    banner-mode: off
+    web-application-type: none
+
+grpc:
+  client:
+    master:
+      address: static://${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
+      negotiation-type: plaintext
+
+gfs:
+  client:
+    write-max-attempts: 15     # x retry-backoff-ms must comfortably exceed failover time (~6s)
+    read-max-attempts: 3
+    retry-backoff-ms: 1000
+    rpc-timeout-ms: 3000
+    write-timeout-ms: 10000
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level %msg%n"
+  level:
+    root: WARN
+    io.gfs: INFO

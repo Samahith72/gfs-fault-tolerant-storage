@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: gfs-chunkserver
+  main:
+    banner-mode: off
+    web-application-type: none
+
+grpc:
+  server:
+    port: ${GFS_GRPC_PORT:9101}
+  client:
+    master:
+      address: static://${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
+      negotiation-type: plaintext
+
+gfs:
+  chunkserver:
+    id: ${GFS_SERVER_ID:cs1}
+    data-dir: ${GFS_DATA_DIR:./data/${gfs.chunkserver.id}}
+    heartbeat-interval-ms: 1000
+    rpc-timeout-ms: 3000
+    lock-timeout-ms: 5000
+    max-chunk-size-bytes: 67108864   # 64 MiB, as in GFS
+    max-write-bytes: 2097152         # per-RPC payload cap (gRPC default message limit is 4 MiB)
+    fsync-on-write: true
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{24} - %msg%n"
