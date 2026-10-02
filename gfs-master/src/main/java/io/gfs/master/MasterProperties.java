@@ -7,12 +7,8 @@ import java.util.List;
 
 @ConfigurationProperties(prefix = "gfs.master")
 public record MasterProperties(
-        @DefaultValue("4000") 
-        long heartbeatTimeoutMs,
-
-        @DefaultValue("5000") 
-        ong leaseDurationMs,
-        
+        @DefaultValue("4000") long heartbeatTimeoutMs,
+        @DefaultValue("5000") long leaseDurationMs,
         List<ServerConfig> servers) {
 
     public MasterProperties {
