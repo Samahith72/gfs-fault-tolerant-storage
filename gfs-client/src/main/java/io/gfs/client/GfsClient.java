@@ -1,4 +1,4 @@
-package main.java.io.gfs.client;
+package io.gfs.client;
 
 import com.google.protobuf.ByteString;
 import io.gfs.proto.ChunkServiceGrpc;

@@ -1,4 +1,4 @@
-package main.java.io.gfs.master;
+package io.gfs.master;
 
 import io.gfs.proto.CheckPrimaryRequest;
 import io.gfs.proto.CheckPrimaryResponse;

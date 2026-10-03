@@ -1,4 +1,4 @@
-package main.java.io.gfs.chunkserver;
+package io.gfs.chunkserver;
 
 import io.gfs.proto.ChunkInfo;
 import io.gfs.proto.HeartbeatRequest;

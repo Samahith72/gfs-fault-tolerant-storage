@@ -10,7 +10,9 @@ grpc:
     port: ${GFS_GRPC_PORT:9101}
   client:
     master:
-      address: static://${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
+      # dns:/// re-resolves the hostname on reconnect (static:// resolves once),
+      # so a restarted master container with a new IP is found again.
+      address: dns:///${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
       negotiation-type: plaintext
 
 gfs:

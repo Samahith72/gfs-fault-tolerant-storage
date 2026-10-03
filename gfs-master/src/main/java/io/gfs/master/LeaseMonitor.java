@@ -1,4 +1,4 @@
-package main.java.io.gfs.master;
+package io.gfs.master;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
