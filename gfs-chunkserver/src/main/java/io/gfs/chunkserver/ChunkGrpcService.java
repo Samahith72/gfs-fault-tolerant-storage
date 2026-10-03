@@ -1,4 +1,4 @@
-package main.java.io.gfs.chunkserver;
+package io.gfs.chunkserver;
 
 import com.google.protobuf.ByteString;
 import io.gfs.proto.CheckPrimaryRequest;

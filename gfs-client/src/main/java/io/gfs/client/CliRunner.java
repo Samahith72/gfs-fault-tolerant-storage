@@ -1,4 +1,4 @@
-package main.java.io.gfs.client;
+package io.gfs.client;
 
 import io.gfs.proto.ChunkInfo;
 import io.gfs.proto.GetClusterStatusResponse;

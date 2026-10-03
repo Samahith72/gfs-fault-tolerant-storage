@@ -1,4 +1,4 @@
-package main.java.io.gfs.master;
+package io.gfs.master;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;

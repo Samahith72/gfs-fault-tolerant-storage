@@ -1,4 +1,4 @@
-package main.java.io.gfs.chunkserver;
+package io.gfs.chunkserver;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;

@@ -8,7 +8,7 @@ spring:
 grpc:
   client:
     master:
-      address: static://${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
+      address: dns:///${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
       negotiation-type: plaintext
 
 gfs:

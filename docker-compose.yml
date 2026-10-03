@@ -1,0 +1,78 @@
+name: gfs
+
+x-chunkserver: &chunkserver
+  image: gfs-chunkserver:0.1.0
+  build:
+    context: .
+    target: chunkserver
+  depends_on:
+    - master
+
+services:
+  master:
+    image: gfs-master:0.1.0
+    build:
+      context: .
+      target: master
+    container_name: gfs-master
+    environment:
+      GFS_GRPC_PORT: "9000"
+      # Addresses the master hands out to clients and primaries. These are
+      # compose service names, resolved by Docker's embedded DNS.
+      GFS_CS1_HOST: cs1
+      GFS_CS1_PORT: "9101"
+      GFS_CS2_HOST: cs2
+      GFS_CS2_PORT: "9102"
+      GFS_CS3_HOST: cs3
+      GFS_CS3_PORT: "9103"
+
+  cs1:
+    <<: *chunkserver
+    container_name: gfs-cs1
+    environment:
+      GFS_SERVER_ID: cs1
+      GFS_GRPC_PORT: "9101"
+      GFS_MASTER_HOST: master
+      GFS_MASTER_PORT: "9000"
+    volumes:
+      - cs1-data:/data
+
+  cs2:
+    <<: *chunkserver
+    container_name: gfs-cs2
+    environment:
+      GFS_SERVER_ID: cs2
+      GFS_GRPC_PORT: "9102"
+      GFS_MASTER_HOST: master
+      GFS_MASTER_PORT: "9000"
+    volumes:
+      - cs2-data:/data
+
+  cs3:
+    <<: *chunkserver
+    container_name: gfs-cs3
+    environment:
+      GFS_SERVER_ID: cs3
+      GFS_GRPC_PORT: "9103"
+      GFS_MASTER_HOST: master
+      GFS_MASTER_PORT: "9000"
+    volumes:
+      - cs3-data:/data
+
+  # CLI client. Not started by `up`; run with: docker compose run --rm client <args>
+  client:
+    image: gfs-client:0.1.0
+    build:
+      context: .
+      target: client
+    profiles: ["tools"]
+    depends_on:
+      - master
+    environment:
+      GFS_MASTER_HOST: master
+      GFS_MASTER_PORT: "9000"
+
+volumes:
+  cs1-data:
+  cs2-data:
+  cs3-data:
