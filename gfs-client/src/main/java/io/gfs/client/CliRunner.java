@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -23,6 +25,7 @@ import java.util.stream.Collectors;
  *   status
  *   write      &lt;chunk&gt; &lt;offset&gt; &lt;text...&gt;
  *   read       &lt;chunk&gt; [offset] [length]
+ *   read-loop  &lt;chunk&gt; &lt;count&gt;                      (shows which replica served each read)
  *   write-loop &lt;chunk&gt; &lt;count&gt; &lt;intervalMs&gt; [tag]
  *   raw-write  &lt;host&gt; &lt;port&gt; &lt;chunk&gt; &lt;offset&gt; &lt;text...&gt;   (bypasses discovery; for lease tests)
  */
@@ -37,6 +40,7 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
               status
               write      <chunk> <offset> <text...>
               read       <chunk> [offset] [length]
+              read-loop  <chunk> <count>
               write-loop <chunk> <count> <intervalMs> [tag]
               raw-write  <host> <port> <chunk> <offset> <text...>""";
 
@@ -69,6 +73,7 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
                 case "status" -> status();
                 case "write" -> write(a);
                 case "read" -> read(a);
+                case "read-loop" -> readLoop(a);
                 case "write-loop" -> writeLoop(a);
                 case "raw-write" -> rawWrite(a);
                 default -> throw new UsageException("unknown command '" + a.get(0) + "'");
@@ -90,6 +95,7 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
     private void status() {
         GetClusterStatusResponse s = client.status();
         long now = s.getServerTimeMs();
+        log.info("REPLICATION FACTOR: {}", s.getReplicationFactor());
         if (s.getPrimaryId().isEmpty()) {
             log.info("PRIMARY: none");
         } else {
@@ -98,14 +104,16 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
         }
         for (ServerStatus sv : s.getServersList()) {
             String chunks = sv.getChunksList().stream()
-                    .map((ChunkInfo c) -> c.getChunkHandle() + "(" + c.getSizeBytes() + "B)")
+                    .map((ChunkInfo c) -> c.getChunkHandle() + "(v" + c.getVersion() + "," + c.getSizeBytes() + "B)")
                     .collect(Collectors.joining(", "));
             String lastHb = sv.getLastHeartbeatMs() == 0 ? "never" : (now - sv.getLastHeartbeatMs()) + " ms ago";
             log.info("SERVER {} {}:{} alive={} primary={} lastHeartbeat={} chunks=[{}]",
                     sv.getServerId(), sv.getHost(), sv.getPort(), sv.getAlive(), sv.getIsPrimary(), lastHb, chunks);
         }
         s.getChunkLocationsList().forEach(l ->
-                log.info("CHUNK {} -> {}", l.getChunkHandle(), l.getServerIdsList()));
+                log.info("CHUNK {} v{} replicas={} stale={} ({}/{} desired)",
+                        l.getChunkHandle(), l.getVersion(), l.getServerIdsList(), l.getStaleServerIdsList(),
+                        l.getServerIdsCount(), s.getReplicationFactor()));
     }
 
     private void write(List<String> a) {
@@ -116,8 +124,8 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
         long offset = Long.parseLong(a.get(2));
         byte[] data = String.join(" ", a.subList(3, a.size())).getBytes(StandardCharsets.UTF_8);
         WriteChunkResponse r = client.write(handle, offset, data);
-        log.info("WRITE ok: chunk={} offset={} bytes={} replicasAcked={} lease={}",
-                handle, offset, data.length, r.getReplicasAcked(), r.getLeaseId());
+        log.info("WRITE ok: chunk={} offset={} bytes={} version={} replicasAcked={} lease={}",
+                handle, offset, data.length, r.getVersion(), r.getReplicasAcked(), r.getLeaseId());
     }
 
     private void read(List<String> a) {
@@ -130,6 +138,21 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
         log.info("READ ok: chunk={} servedBy={} bytes={} chunkSize={}\n{}",
                 a.get(1), r.getServedBy(), r.getData().size(), r.getChunkSize(),
                 r.getData().toString(StandardCharsets.UTF_8));
+    }
+
+    /** Issues N one-byte reads and tallies which replica served each: proves read load-balancing. */
+    private void readLoop(List<String> a) {
+        if (a.size() != 3) {
+            throw new UsageException("read-loop needs <chunk> <count>");
+        }
+        String handle = a.get(1);
+        int count = Integer.parseInt(a.get(2));
+        Map<String, Integer> served = new TreeMap<>();
+        for (int i = 0; i < count; i++) {
+            ReadChunkResponse r = client.read(handle, 0, 1);
+            served.merge(r.getServedBy(), 1, Integer::sum);
+        }
+        log.info("READ-LOOP {} reads of '{}' served by: {}", count, handle, served);
     }
 
     /** Writes fixed-size 32-byte records at offset i*32, so every write is idempotent and verifiable. */
@@ -148,8 +171,8 @@ public class CliRunner implements ApplicationRunner, ExitCodeGenerator {
             long t0 = System.currentTimeMillis();
             WriteChunkResponse r = client.write(handle, (long) i * RECORD_SIZE,
                     record.getBytes(StandardCharsets.UTF_8));
-            log.info("WRITE-LOOP {}/{} ok in {} ms (replicasAcked={}, lease={})",
-                    i + 1, count, System.currentTimeMillis() - t0, r.getReplicasAcked(), r.getLeaseId());
+            log.info("WRITE-LOOP {}/{} ok in {} ms (version={}, replicasAcked={}, lease={})",
+                    i + 1, count, System.currentTimeMillis() - t0, r.getVersion(), r.getReplicasAcked(), r.getLeaseId());
             if (intervalMs > 0 && i < count - 1) {
                 try {
                     Thread.sleep(intervalMs);

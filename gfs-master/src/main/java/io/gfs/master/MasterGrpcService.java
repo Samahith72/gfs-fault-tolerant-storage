@@ -2,6 +2,8 @@ package io.gfs.master;
 
 import io.gfs.proto.CheckPrimaryRequest;
 import io.gfs.proto.CheckPrimaryResponse;
+import io.gfs.proto.CommitWriteRequest;
+import io.gfs.proto.CommitWriteResponse;
 import io.gfs.proto.GetClusterStatusRequest;
 import io.gfs.proto.GetClusterStatusResponse;
 import io.gfs.proto.GetPrimaryRequest;
@@ -31,11 +33,12 @@ public class MasterGrpcService extends MasterServiceGrpc.MasterServiceImplBase {
     @Override
     public void heartbeat(HeartbeatRequest request, StreamObserver<HeartbeatResponse> out) {
         try {
-            out.onNext(state.heartbeat(request.getServerId(), request.getChunksList()));
+            out.onNext(state.heartbeat(request.getServerId(), request.getHost(), request.getPort(),
+                    request.getChunksList()));
             out.onCompleted();
         } catch (IllegalArgumentException e) {
             log.warn("Rejected heartbeat: {}", e.getMessage());
-            out.onError(Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException());
+            out.onError(Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asRuntimeException());
         }
     }
 
@@ -48,11 +51,27 @@ public class MasterGrpcService extends MasterServiceGrpc.MasterServiceImplBase {
     @Override
     public void checkPrimary(CheckPrimaryRequest request, StreamObserver<CheckPrimaryResponse> out) {
         try {
-            out.onNext(state.checkPrimary(request.getServerId()));
+            out.onNext(state.checkPrimary(request.getServerId(), request.getChunkHandle()));
             out.onCompleted();
         } catch (IllegalArgumentException e) {
             log.warn("Rejected CheckPrimary: {}", e.getMessage());
             out.onError(Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException());
+        } catch (IllegalStateException e) {
+            log.warn("Rejected CheckPrimary: {}", e.getMessage());
+            out.onError(Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asRuntimeException());
+        }
+    }
+
+    @Override
+    public void commitWrite(CommitWriteRequest request, StreamObserver<CommitWriteResponse> out) {
+        try {
+            state.commitWrite(request.getServerId(), request.getChunkHandle(), request.getLeaseId(),
+                    request.getVersion(), request.getAckedServerIdsList());
+            out.onNext(CommitWriteResponse.getDefaultInstance());
+            out.onCompleted();
+        } catch (IllegalStateException e) {
+            log.warn("Rejected CommitWrite: {}", e.getMessage());
+            out.onError(Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asRuntimeException());
         }
     }
 

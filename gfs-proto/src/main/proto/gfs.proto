@@ -17,22 +17,28 @@ message ServerAddress {
 message ChunkInfo {
   string chunk_handle = 1;
   int64 size_bytes = 2;
+  int64 version = 3;               // last write version applied on this replica
 }
 
 // ------------------------------------------------------- master control plane
 
 service MasterService {
-  // Chunkserver -> master. Liveness + chunk report + implicit lease renewal.
+  // Chunkserver -> master. Registration (first call), liveness, chunk report,
+  // implicit lease renewal. Response may carry repair (copy) orders.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 
   // Client -> master. Who is the primary right now?
   rpc GetPrimary(GetPrimaryRequest) returns (GetPrimaryResponse);
 
-  // Chunkserver -> master, on EVERY write. "Am I still the primary, and who
-  // are the live secondaries?" This is the live lease check.
+  // Primary -> master, on EVERY write, for ONE chunk. Live lease check + the chunk's
+  // replica set + the version this write must carry.
   rpc CheckPrimary(CheckPrimaryRequest) returns (CheckPrimaryResponse);
 
-  // Client -> master. Which live servers hold this chunk?
+  // Primary -> master, after every fully replicated write. Records which replicas
+  // hold the new version (the "fresh set").
+  rpc CommitWrite(CommitWriteRequest) returns (CommitWriteResponse);
+
+  // Client -> master. Which fresh, alive servers hold this chunk? (round-robin order)
   rpc LocateChunk(LocateChunkRequest) returns (LocateChunkResponse);
 
   // Dashboard / CLI -> master. Full cluster snapshot.
@@ -41,14 +47,23 @@ service MasterService {
 
 message HeartbeatRequest {
   string server_id = 1;
-  repeated ChunkInfo chunks = 2;   // full chunk report; master learns locations from this
+  repeated ChunkInfo chunks = 2;   // full chunk report
+  string host = 3;                 // advertised address (how OTHER nodes reach this server)
+  int32 port = 4;
+}
+
+message CopyOrder {
+  string chunk_handle = 1;
+  ServerAddress source = 2;        // a fresh replica to pull from
+  int64 required_version = 3;
 }
 
 message HeartbeatResponse {
   bool is_primary = 1;
   int64 lease_id = 2;
-  int64 lease_expiry_ms = 3;       // master clock, epoch millis
-  string primary_id = 4;           // empty if none
+  int64 lease_expiry_ms = 3;
+  string primary_id = 4;
+  repeated CopyOrder copy_orders = 5;
 }
 
 message GetPrimaryRequest {}
@@ -62,21 +77,33 @@ message GetPrimaryResponse {
 
 message CheckPrimaryRequest {
   string server_id = 1;
+  string chunk_handle = 2;
 }
 
 message CheckPrimaryResponse {
   bool is_primary = 1;
   int64 lease_id = 2;
   int64 lease_expiry_ms = 3;
-  repeated ServerAddress secondaries = 4;  // alive servers other than the caller
+  repeated ServerAddress replicas = 4;   // alive FRESH replicas of the chunk (may include the caller)
+  int64 version = 5;                     // version this write must carry
 }
+
+message CommitWriteRequest {
+  string server_id = 1;
+  string chunk_handle = 2;
+  int64 lease_id = 3;
+  int64 version = 4;
+  repeated string acked_server_ids = 5;
+}
+
+message CommitWriteResponse {}
 
 message LocateChunkRequest {
   string chunk_handle = 1;
 }
 
 message LocateChunkResponse {
-  repeated ServerAddress servers = 1;      // alive servers holding the chunk
+  repeated ServerAddress servers = 1;
 }
 
 message GetClusterStatusRequest {}
@@ -87,35 +114,36 @@ message ServerStatus {
   int32 port = 3;
   bool alive = 4;
   bool is_primary = 5;
-  int64 last_heartbeat_ms = 6;             // master clock; 0 = never seen
-  repeated ChunkInfo chunks = 7;           // last reported
+  int64 last_heartbeat_ms = 6;
+  repeated ChunkInfo chunks = 7;
 }
 
 message ChunkLocation {
   string chunk_handle = 1;
-  repeated string server_ids = 2;          // ALIVE servers only
+  repeated string server_ids = 2;        // alive + up-to-date replicas
+  repeated string stale_server_ids = 3;  // alive but behind (awaiting repair)
+  int64 version = 4;                     // last committed version
 }
 
 message GetClusterStatusResponse {
-  string primary_id = 1;                   // empty if none
+  string primary_id = 1;
   int64 lease_id = 2;
   int64 lease_expiry_ms = 3;
   repeated ServerStatus servers = 4;
   repeated ChunkLocation chunk_locations = 5;
   int64 server_time_ms = 6;
+  int32 replication_factor = 7;
 }
 
 // ------------------------------------------------------- chunkserver data plane
 
 service ChunkService {
-  // Client -> primary only. Enforced via live master check + fencing.
   rpc WriteChunk(WriteChunkRequest) returns (WriteChunkResponse);
-
-  // Primary -> secondary. Carries the lease id as a fencing token.
   rpc ReplicateChunk(ReplicateChunkRequest) returns (ReplicateChunkResponse);
-
-  // Client -> any replica.
   rpc ReadChunk(ReadChunkRequest) returns (ReadChunkResponse);
+
+  // Server -> server (repair). Streams a consistent snapshot of a whole chunk.
+  rpc StreamChunk(StreamChunkRequest) returns (stream StreamChunkResponse);
 }
 
 message WriteChunkRequest {
@@ -126,8 +154,9 @@ message WriteChunkRequest {
 
 message WriteChunkResponse {
   int64 lease_id = 1;
-  int32 replicas_acked = 2;                // including the primary
+  int32 replicas_acked = 2;
   int64 new_chunk_size = 3;
+  int64 version = 4;
 }
 
 message ReplicateChunkRequest {
@@ -136,6 +165,7 @@ message ReplicateChunkRequest {
   bytes data = 3;
   int64 lease_id = 4;
   string primary_id = 5;
+  int64 version = 6;
 }
 
 message ReplicateChunkResponse {}
@@ -143,11 +173,21 @@ message ReplicateChunkResponse {}
 message ReadChunkRequest {
   string chunk_handle = 1;
   int64 offset = 2;
-  int64 length = 3;                        // <= 0 means "to end of chunk"
+  int64 length = 3;
 }
 
 message ReadChunkResponse {
   bytes data = 1;
   int64 chunk_size = 2;
   string served_by = 3;
+}
+
+message StreamChunkRequest {
+  string chunk_handle = 1;
+}
+
+message StreamChunkResponse {
+  bytes data = 1;
+  int64 chunk_size = 2;     // total size of the chunk (same on every message)
+  int64 version = 3;        // version of the snapshot (same on every message)
 }

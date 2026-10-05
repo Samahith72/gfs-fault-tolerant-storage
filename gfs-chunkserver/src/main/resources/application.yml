@@ -10,8 +10,6 @@ grpc:
     port: ${GFS_GRPC_PORT:9101}
   client:
     master:
-      # dns:/// re-resolves the hostname on reconnect (static:// resolves once),
-      # so a restarted master container with a new IP is found again.
       address: dns:///${GFS_MASTER_HOST:localhost}:${GFS_MASTER_PORT:9000}
       negotiation-type: plaintext
 
@@ -19,12 +17,18 @@ gfs:
   chunkserver:
     id: ${GFS_SERVER_ID:cs1}
     data-dir: ${GFS_DATA_DIR:./data/${gfs.chunkserver.id}}
+    # How OTHER nodes reach this server. Sent to the master in every heartbeat (registration).
+    # localhost for single-machine runs; the compose service name in Docker.
+    advertise-host: ${GFS_ADVERTISE_HOST:localhost}
+    advertise-port: ${GFS_ADVERTISE_PORT:${grpc.server.port}}
     heartbeat-interval-ms: 1000
     rpc-timeout-ms: 3000
     lock-timeout-ms: 5000
     max-chunk-size-bytes: 67108864   # 64 MiB, as in GFS
     max-write-bytes: 2097152         # per-RPC payload cap (gRPC default message limit is 4 MiB)
     fsync-on-write: true
+    copy-piece-bytes: 1048576        # repair streaming piece size
+    copy-timeout-ms: 60000           # whole-chunk repair deadline
 
 logging:
   pattern:

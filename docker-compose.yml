@@ -17,14 +17,9 @@ services:
     container_name: gfs-master
     environment:
       GFS_GRPC_PORT: "9000"
-      # Addresses the master hands out to clients and primaries. These are
-      # compose service names, resolved by Docker's embedded DNS.
-      GFS_CS1_HOST: cs1
-      GFS_CS1_PORT: "9101"
-      GFS_CS2_HOST: cs2
-      GFS_CS2_PORT: "9102"
-      GFS_CS3_HOST: cs3
-      GFS_CS3_PORT: "9103"
+      # Replication factor is the ONLY cluster-shape setting left. There is no server list:
+      # chunkservers register themselves. Override with:  GFS_REPLICATION_FACTOR=2 docker compose up -d
+      GFS_REPLICATION_FACTOR: "${GFS_REPLICATION_FACTOR:-3}"
 
   cs1:
     <<: *chunkserver
@@ -32,6 +27,7 @@ services:
     environment:
       GFS_SERVER_ID: cs1
       GFS_GRPC_PORT: "9101"
+      GFS_ADVERTISE_HOST: cs1      # how other containers reach this one (compose service name)
       GFS_MASTER_HOST: master
       GFS_MASTER_PORT: "9000"
     volumes:
@@ -43,6 +39,7 @@ services:
     environment:
       GFS_SERVER_ID: cs2
       GFS_GRPC_PORT: "9102"
+      GFS_ADVERTISE_HOST: cs2
       GFS_MASTER_HOST: master
       GFS_MASTER_PORT: "9000"
     volumes:
@@ -54,10 +51,25 @@ services:
     environment:
       GFS_SERVER_ID: cs3
       GFS_GRPC_PORT: "9103"
+      GFS_ADVERTISE_HOST: cs3
       GFS_MASTER_HOST: master
       GFS_MASTER_PORT: "9000"
     volumes:
       - cs3-data:/data
+
+  # Not started by the commands below. Start it later to prove dynamic registration:
+  #   docker compose up -d cs4
+  cs4:
+    <<: *chunkserver
+    container_name: gfs-cs4
+    environment:
+      GFS_SERVER_ID: cs4
+      GFS_GRPC_PORT: "9104"
+      GFS_ADVERTISE_HOST: cs4
+      GFS_MASTER_HOST: master
+      GFS_MASTER_PORT: "9000"
+    volumes:
+      - cs4-data:/data
 
   # CLI client. Not started by `up`; run with: docker compose run --rm client <args>
   client:
@@ -76,3 +88,4 @@ volumes:
   cs1-data:
   cs2-data:
   cs3-data:
+  cs4-data:

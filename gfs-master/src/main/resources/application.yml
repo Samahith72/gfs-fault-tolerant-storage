@@ -11,19 +11,14 @@ grpc:
 
 gfs:
   master:
-    heartbeat-timeout-ms: 4000   # no heartbeat for this long => server considered DEAD
-    lease-duration-ms: 5000      # primary lease; renewed by each primary heartbeat
-    # Phase 1: static membership. Phase 3 replaces this with dynamic registration.
-    servers:
-      - id: cs1
-        host: ${GFS_CS1_HOST:localhost}
-        port: ${GFS_CS1_PORT:9101}
-      - id: cs2
-        host: ${GFS_CS2_HOST:localhost}
-        port: ${GFS_CS2_PORT:9102}
-      - id: cs3
-        host: ${GFS_CS3_HOST:localhost}
-        port: ${GFS_CS3_PORT:9103}
+    heartbeat-timeout-ms: 4000     # no heartbeat for this long => server considered DEAD
+    lease-duration-ms: 5000        # primary lease; renewed by each primary heartbeat
+    replication-factor: ${GFS_REPLICATION_FACTOR:3}
+    startup-grace-ms: 3000         # after boot: no elections / repairs until servers re-report
+    repair-quiet-ms: 3000          # only repair a chunk that has had no writes for this long
+    repair-timeout-ms: 30000       # give up on an unfinished copy order after this long
+    max-repairs-per-tick: 4        # throttle: copy orders issued per 500 ms tick
+    # No server list: chunkservers register themselves with their first heartbeat.
 
 logging:
   pattern:

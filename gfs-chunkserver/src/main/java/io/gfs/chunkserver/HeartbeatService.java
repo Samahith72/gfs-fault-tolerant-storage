@@ -18,9 +18,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Sends heartbeats (liveness + full chunk report) to the master. A single-thread
- * executor serializes the periodic beats AND the out-of-band beats triggered after
- * writes, so the master always sees reports in order.
+ * Sends heartbeats to the master: registration (advertised address), liveness, and a full
+ * chunk report with versions. A single-thread executor serializes the periodic beats AND the
+ * out-of-band beats triggered after writes/repairs, so the master sees reports in order.
+ * Copy orders in the response are handed to the RepairService.
  *
  * The primary flag in the response is informational only (logging) - write
  * authorization is always re-checked live via CheckPrimary.
@@ -35,6 +36,7 @@ public class HeartbeatService {
 
     private final ChunkserverProperties props;
     private final ChunkStore store;
+    private final RepairService repair;
     private final ScheduledExecutorService executor =
             Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "heartbeat"));
 
@@ -42,19 +44,20 @@ public class HeartbeatService {
     private boolean wasPrimary = false;
     private long lastLeaseId = 0;
 
-    public HeartbeatService(ChunkserverProperties props, ChunkStore store) {
+    public HeartbeatService(ChunkserverProperties props, ChunkStore store, RepairService repair) {
         this.props = props;
         this.store = store;
+        this.repair = repair;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
-        log.info("Chunkserver '{}' started; heartbeating to master every {} ms",
-                props.id(), props.heartbeatIntervalMs());
+        log.info("Chunkserver '{}' started; advertising {}:{}; heartbeating to master every {} ms",
+                props.id(), props.advertiseHost(), props.advertisePort(), props.heartbeatIntervalMs());
         executor.scheduleWithFixedDelay(this::beat, 0, props.heartbeatIntervalMs(), TimeUnit.MILLISECONDS);
     }
 
-    /** Push a heartbeat now (e.g. right after a write) so the master learns new chunk locations quickly. */
+    /** Push a heartbeat now (after a write or repair) so the master learns new chunk state quickly. */
     public void triggerNow() {
         executor.execute(this::beat);
     }
@@ -66,9 +69,14 @@ public class HeartbeatService {
 
     private void beat() {
         try {
-            HeartbeatRequest.Builder req = HeartbeatRequest.newBuilder().setServerId(props.id());
-            store.snapshot().forEach((handle, size) ->
-                    req.addChunks(ChunkInfo.newBuilder().setChunkHandle(handle).setSizeBytes(size)));
+            HeartbeatRequest.Builder req = HeartbeatRequest.newBuilder()
+                    .setServerId(props.id())
+                    .setHost(props.advertiseHost())
+                    .setPort(props.advertisePort());
+            store.snapshot().forEach((handle, info) -> req.addChunks(ChunkInfo.newBuilder()
+                    .setChunkHandle(handle)
+                    .setSizeBytes(info.size())
+                    .setVersion(info.version())));
 
             HeartbeatResponse resp = master
                     .withDeadlineAfter(props.rpcTimeoutMs(), TimeUnit.MILLISECONDS)
@@ -81,6 +89,8 @@ public class HeartbeatService {
             }
             wasPrimary = resp.getIsPrimary();
             lastLeaseId = resp.getLeaseId();
+
+            resp.getCopyOrdersList().forEach(order -> repair.submit(order, this::triggerNow));
         } catch (StatusRuntimeException e) {
             log.warn("Heartbeat to master failed: {}", e.getStatus());
         } catch (RuntimeException e) {
